@@ -120,7 +120,9 @@ void GLView::setupCamera() const
 
 void GLView::paintGL()
 {
+  OPENGL_TEST("pre paintGL");
   glDisable(GL_LIGHTING);
+  OPENGL_TEST("disable lighting");
   auto bgcol = ColorMap::getColor(*this->colorscheme, RenderColor::BACKGROUND_COLOR);
   auto bgstopcol = ColorMap::getColor(*this->colorscheme, RenderColor::BACKGROUND_STOP_COLOR);
   auto axescolor = ColorMap::getColor(*this->colorscheme, RenderColor::AXES_COLOR);
@@ -147,6 +149,7 @@ void GLView::paintGL()
     glEnable(GL_DEPTH_TEST);
   }
 
+  OPENGL_TEST("paintGL step 1");
   setupCamera();
 
   // The crosshair should be fixed at the center of the viewport...
@@ -163,6 +166,7 @@ void GLView::paintGL()
   glDisable(GL_CULL_FACE);
   glLineWidth(2);
   glColor3d(1.0, 0.0, 0.0);
+  OPENGL_TEST("paintGL step 2");
 
   if (this->renderer) {
 #if defined(ENABLE_OPENCSG)
@@ -175,6 +179,7 @@ void GLView::paintGL()
 
   glDisable(GL_LIGHTING);
   if (showaxes) GLView::showSmallaxes(axescolor);
+  OPENGL_TEST("paintGL completed");
 }
 
 #ifdef ENABLE_OPENCSG
@@ -237,9 +242,9 @@ void GLView::enable_opencsg_shaders()
 #endif // ifdef ENABLE_OPENCSG
 
 
-#ifdef DEBUG
+//#ifdef DEBUG
 // Requires OpenGL 4.3+
-/*
+
    void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id, GLenum severity,
                                   GLsizei length, const GLchar* message, const void* userParam)
    {
@@ -247,18 +252,18 @@ void GLView::enable_opencsg_shaders()
             (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
             type, severity, message);
    }
-   //*/
-#endif
+   //
+//#endif
 
 void GLView::initializeGL()
 {
-#ifdef DEBUG
-/*
+//#ifdef DEBUG
+
    // Requires OpenGL 4.3+
    glEnable              ( GL_DEBUG_OUTPUT );
    glDebugMessageCallback( MessageCallback, 0 );
-   //*/
-#endif
+   //
+//#endif
 
   glEnable(GL_DEPTH_TEST);
   glDepthRange(-far_far_away, +far_far_away);
@@ -285,6 +290,7 @@ void GLView::initializeGL()
   // The following line is reported to fix issue #71
   glMateriali(GL_FRONT_AND_BACK, GL_SHININESS, 64);
   glEnable(GL_COLOR_MATERIAL);
+  OPENGL_TEST("initializeGL");
 #ifdef ENABLE_OPENCSG
   enable_opencsg_shaders();
 #endif

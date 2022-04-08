@@ -22,6 +22,7 @@
 #include "TabManager.h"
 #include "RenderStatistic.h"
 #include <memory>
+#include <mutex>
 
 #ifdef STATIC_QT_SVG_PLUGIN
 #include <QtPlugin>
@@ -31,10 +32,17 @@ Q_IMPORT_PLUGIN(QSvgPlugin)
 class AbstractNode;
 class MouseSelector;
 
+#define LOCK(x) const std::lock_guard<std::mutex> lock(x);
+#define LOCK_DURING(x, y) do { const std::lock_guard<std::mutex> lock(x); y; } while(0)
+
 class MainWindow : public QMainWindow, public Ui::MainWindow, public InputEventHandler
 {
   Q_OBJECT
 
+protected:
+  std::mutex guard;
+  BaseVisitor *visitation=nullptr;
+  EvaluationSession *evalSession = nullptr;
 public:
   class Preferences *prefs;
 
@@ -87,6 +95,7 @@ public:
   ~MainWindow();
 
 private:
+  volatile bool isClosing=false;
   void consoleOutputRaw(const QString& msg);
 
 protected:
@@ -216,6 +225,7 @@ protected:
 
 public slots:
   void actionRenderPreview();
+  void actionRenderAbort();
 private slots:
   void csgRender();
   void csgReloadRender();

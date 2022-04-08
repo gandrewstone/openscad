@@ -152,6 +152,12 @@ struct DockFocus {
   std::function<void(MainWindow *)> focus;
 };
 
+void APIENTRY openglErrorReceiver(GLenum source, GLenum type, GLuint id,
+                                              GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
+{
+    printf("Error [source: %d, type: %d, id: %d]: %s\n", (int) source, (int) type, (int) id, message);
+}
+
 QAction *findAction(const QList<QAction *>& actions, const std::string& name)
 {
   for (const auto action : actions) {
@@ -429,6 +435,7 @@ MainWindow::MainWindow(const QStringList& filenames)
   connect(this->designActionAutoReload, SIGNAL(toggled(bool)), this, SLOT(autoReloadSet(bool)));
   connect(this->designActionReloadAndPreview, SIGNAL(triggered()), this, SLOT(actionReloadRenderPreview()));
   connect(this->designActionPreview, SIGNAL(triggered()), this, SLOT(actionRenderPreview()));
+  connect(this->designActionAbort, SIGNAL(triggered()), this, SLOT(actionRenderAbort()));
 #ifdef ENABLE_CGAL
   connect(this->designActionRender, SIGNAL(triggered()), this, SLOT(actionRender()));
 #else
@@ -593,6 +600,7 @@ MainWindow::MainWindow(const QStringList& filenames)
   initActionIcon(viewActionPerspective, ":/resources/icons/svg-default/perspective.svg", ":/resources/icons/svg-default/perspective-white.svg");
   initActionIcon(viewActionOrthogonal, ":/resources/icons/svg-default/orthogonal.svg", ":/resources/icons/svg-default/orthogonal-white.svg");
   initActionIcon(designActionPreview, ":/resources/icons/svg-default/preview.svg", ":/resources/icons/svg-default/preview-white.svg");
+  initActionIcon(designActionAbort, ":/resources/icons/svg-default/abort.svg", ":/resources/icons/svg-default/abort-white.svg");
   initActionIcon(viewActionAnimate, ":/resources/icons/svg-default/animate.svg", ":/resources/icons/svg-default/animate-white.svg");
   initActionIcon(fileActionExportSTL, ":/resources/icons/svg-default/export-stl.svg", ":/resources/icons/svg-default/export-stl-white.svg");
   initActionIcon(fileActionExportAMF, ":/resources/icons/svg-default/export-amf.svg", ":/resources/icons/svg-default/export-amf-white.svg");
@@ -668,8 +676,10 @@ MainWindow::MainWindow(const QStringList& filenames)
   connect(this->errorLogDock, SIGNAL(topLevelChanged(bool)), this, SLOT(errorLogTopLevelChanged(bool)));
 
   // display this window and check for OpenGL 2.0 (OpenCSG) support
+  OPENGL_TEST("pre-viewMode");
   viewModeThrownTogether();
   show();
+  OPENGL_TEST("show");
 
   setCurrentOutput();
 
@@ -678,6 +688,8 @@ MainWindow::MainWindow(const QStringList& filenames)
 #else
   viewModeThrownTogether();
 #endif
+  OPENGL_TEST("viewMode");
+
   loadViewSettings();
   loadDesignSettings();
 
@@ -1238,6 +1250,7 @@ void MainWindow::instantiateRoot()
     AbstractNode::resetIndexCounter();
 
     EvaluationSession session{doc.parent_path().string()};
+    LOCK_DURING(guard, evalSession = &session);
     ContextHandle<BuiltinContext> builtin_context{Context::create<BuiltinContext>(&session)};
     setRenderVariables(builtin_context);
 
@@ -1260,6 +1273,8 @@ void MainWindow::instantiateRoot()
       // FIXME: Consider giving away ownership of root_node to the Tree, or use reference counted pointers
       this->tree.setRoot(this->root_node);
     }
+
+    LOCK_DURING(guard, evalSession = nullptr);
   }
 
   if (!this->root_node) {
@@ -1298,9 +1313,11 @@ void MainWindow::compileCSG()
     CSGTreeEvaluator csgrenderer(this->tree, &geomevaluator);
 #endif
 
-    progress_report_prep(this->root_node, report_func, this);
+    if (!isClosing) progress_report_prep(this->root_node, report_func, this);
+    else return;
     try {
 #ifdef ENABLE_OPENCSG
+      LOCK_DURING(guard, visitation = &csgrenderer);
       this->processEvents();
       this->csgRoot = csgrenderer.buildCSGTree(*root_node);
 #endif
@@ -1311,6 +1328,8 @@ void MainWindow::compileCSG()
     } catch (const HardWarningException&) {
       LOG(message_group::None, Location::NONE, "", "CSG generation cancelled due to hardwarning being enabled.");
     }
+
+    LOCK_DURING(guard, visitation = nullptr);
     progress_report_fin();
     updateStatusBar(nullptr);
 
@@ -1919,6 +1938,13 @@ void MainWindow::actionRenderPreview()
   }
 }
 
+void MainWindow::actionRenderAbort()
+{
+    LOCK(guard);
+    if (visitation) visitation->abort();
+    if (evalSession) evalSession->abort();
+}
+
 void MainWindow::csgRender()
 {
   if (this->root_node) compileCSG();
@@ -2162,7 +2188,8 @@ void MainWindow::cgalRender()
   this->progresswidget = new ProgressWidget(this);
   connect(this->progresswidget, SIGNAL(requestShow()), this, SLOT(showProgress()));
 
-  progress_report_prep(this->root_node, report_func, this);
+  if (!isClosing) progress_report_prep(this->root_node, report_func, this);
+  else return;
 
   this->cgalworker->start(this->tree);
 }
@@ -3229,6 +3256,8 @@ void MainWindow::helpFontInfo()
 void MainWindow::closeEvent(QCloseEvent *event)
 {
   if (tabManager->shouldClose()) {
+      isClosing=true;
+    progress_report_fin();
     // Disable invokeMethod calls for consoleOutput during shutdown,
     // otherwise will segfault if echos are in progress.
     hideCurrentOutput();

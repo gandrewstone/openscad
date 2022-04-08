@@ -16,7 +16,7 @@ std::list<struct Message> log_messages_stack;
 OutputHandlerFunc *outputhandler = nullptr;
 OutputHandlerFunc2 *outputhandler2 = nullptr;
 void *outputhandler_data = nullptr;
-std::string OpenSCAD::debug("");
+std::string OpenSCAD::debug("all");
 bool OpenSCAD::quiet = false;
 bool OpenSCAD::hardwarnings = false;
 bool OpenSCAD::parameterCheck = true;

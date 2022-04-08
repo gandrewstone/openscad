@@ -38,6 +38,8 @@ public:
   EvaluationSession *session() const { return evaluation_session; }
   const std::string& documentRoot() const { return evaluation_session->documentRoot(); }
 
+  bool isAborted() const { return (evaluation_session) ? evaluation_session->isAborted() : false; }
+
 protected:
   ValueMap lexical_variables;
   ValueMap config_variables;

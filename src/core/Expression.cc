@@ -833,6 +833,7 @@ static void doForEach(
   size_t assignment_index,
   const std::shared_ptr<const Context>& context
   ) {
+    if (context->isAborted()) return;
   if (assignment_index >= assignments.size()) {
     operation(context);
     return;

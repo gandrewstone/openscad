@@ -28,6 +28,7 @@
 
 shared_ptr<CSGNode> CSGTreeEvaluator::buildCSGTree(const AbstractNode& node)
 {
+  resetAbort();
   this->traverse(node);
 
   shared_ptr<CSGNode> t(this->stored_term[node.index()]);

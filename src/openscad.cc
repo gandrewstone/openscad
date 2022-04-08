@@ -905,6 +905,7 @@ bool flagConvert(std::string str){
 // OpenSCAD
 int main(int argc, char **argv)
 {
+    printf("Starting OpenSCAD\n");
 #if defined(ENABLE_CGAL) && defined(USE_MIMALLOC)
   // call init_mimalloc before any GMP variables are initialized. (defined in src/openscad_mimalloc.h)
   init_mimalloc();
@@ -915,6 +916,7 @@ int main(int argc, char **argv)
 
 #ifdef OPENSCAD_QTGUI
   { // Need a dummy app instance to get the application path but it needs to be destroyed before the GUI is launched.
+    QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
     QCoreApplication app(argc, argv);
     PlatformUtils::registerApplicationPath(app.applicationDirPath().toLocal8Bit().constData());
   }
