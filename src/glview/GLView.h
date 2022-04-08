@@ -17,6 +17,14 @@
 
  */
 
+#define OPENGL_TEST(place) \
+  do { \
+    auto err = glGetError(); \
+    if (err != GL_NO_ERROR) { \
+      fprintf(stderr, "OpenGL error " __FILE__ ":%i:" place ":\n %s\n\n", __LINE__, gluErrorString(err)); \
+    } \
+  } while (false)
+
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <string>

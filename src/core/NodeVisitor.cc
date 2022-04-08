@@ -5,6 +5,7 @@ State NodeVisitor::nullstate(nullptr);
 
 Response NodeVisitor::traverse(const AbstractNode& node, const State& state)
 {
+  if (abortFlag) return Response::AbortTraversal;  // Abort signaled from outside
   State newstate = state;
   newstate.setNumChildren(node.getChildren().size());
 

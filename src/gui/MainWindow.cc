@@ -152,6 +152,12 @@ struct DockFocus {
   std::function<void(MainWindow *)> focus;
 };
 
+void APIENTRY openglErrorReceiver(GLenum source, GLenum type, GLuint id,
+                                              GLenum severity, GLsizei length, const GLchar* message, const void* userParam)
+{
+    printf("Error [source: %d, type: %d, id: %d]: %s\n", (int) source, (int) type, (int) id, message);
+}
+
 QAction *findAction(const QList<QAction *>& actions, const std::string& name)
 {
   for (const auto action : actions) {
@@ -430,6 +436,7 @@ MainWindow::MainWindow(const QStringList& filenames)
   connect(this->designActionAutoReload, SIGNAL(toggled(bool)), this, SLOT(autoReloadSet(bool)));
   connect(this->designActionReloadAndPreview, SIGNAL(triggered()), this, SLOT(actionReloadRenderPreview()));
   connect(this->designActionPreview, SIGNAL(triggered()), this, SLOT(actionRenderPreview()));
+  connect(this->designActionAbort, SIGNAL(triggered()), this, SLOT(actionRenderAbort()));
 #ifdef ENABLE_CGAL
   connect(this->designActionRender, SIGNAL(triggered()), this, SLOT(actionRender()));
 #else
@@ -570,6 +577,7 @@ MainWindow::MainWindow(const QStringList& filenames)
   Preferences *instance = Preferences::inst();
   instance->ButtonConfig->init();
 
+<<<<<<< HEAD
   initActionIcon(fileActionNew, ":/icons/svg-default/new.svg", ":/icons/svg-default/new-white.svg");
   initActionIcon(fileActionOpen, ":/icons/svg-default/open.svg", ":/icons/svg-default/open-white.svg");
   initActionIcon(fileActionSave, ":/icons/svg-default/save.svg", ":/icons/svg-default/save-white.svg");
@@ -613,6 +621,52 @@ MainWindow::MainWindow(const QStringList& filenames)
   initActionIcon(editActionIndent, ":/icons/svg-default/indent.svg", ":/icons/svg-default/indent-white.svg");
   initActionIcon(viewActionResetView, ":/icons/svg-default/reset-view.svg", ":/icons/svg-default/reset-view-white.svg");
   initActionIcon(viewActionShowScaleProportional, ":/icons/svg-default/scalemarkers.svg", ":/icons/svg-default/scalemarkers-white.svg");
+=======
+  initActionIcon(fileActionNew, ":/resources/icons/svg-default/new.svg", ":/resources/icons/svg-default/new-white.svg");
+  initActionIcon(fileActionOpen, ":/resources/icons/svg-default/open.svg", ":/resources/icons/svg-default/open-white.svg");
+  initActionIcon(fileActionSave, ":/resources/icons/svg-default/save.svg", ":/resources/icons/svg-default/save-white.svg");
+  initActionIcon(editActionZoomTextIn, ":/resources/icons/svg-default/zoom-text-in.svg", ":/resources/icons/svg-default/zoom-text-in-white.svg");
+  initActionIcon(editActionZoomTextOut, ":/resources/icons/svg-default/zoom-text-out.svg", ":/resources/icons/svg-default/zoom-text-out-white.svg");
+  initActionIcon(designActionRender, ":/resources/icons/svg-default/render.svg", ":/resources/icons/svg-default/render-white.svg");
+  initActionIcon(designAction3DPrint, ":/resources/icons/svg-default/send.svg", ":/resources/icons/svg-default/send-white.svg");
+  initActionIcon(viewActionShowAxes, ":/resources/icons/svg-default/axes.svg", ":/resources/icons/svg-default/axes-white.svg");
+  initActionIcon(viewActionShowEdges, ":/resources/icons/svg-default/show-edges.svg", ":/resources/icons/svg-default/show-edges-white.svg");
+  initActionIcon(viewActionZoomIn, ":/resources/icons/svg-default/zoom-in.svg", ":/resources/icons/svg-default/zoom-in-white.svg");
+  initActionIcon(viewActionZoomOut, ":/resources/icons/svg-default/zoom-out.svg", ":/resources/icons/svg-default/zoom-out-white.svg");
+  initActionIcon(viewActionTop, ":/resources/icons/svg-default/view-top.svg", ":/resources/icons/svg-default/view-top-white.svg");
+  initActionIcon(viewActionBottom, ":/resources/icons/svg-default/view-bottom.svg", ":/resources/icons/svg-default/view-bottom-white.svg");
+  initActionIcon(viewActionLeft, ":/resources/icons/svg-default/view-left.svg", ":/resources/icons/svg-default/view-left-white.svg");
+  initActionIcon(viewActionRight, ":/resources/icons/svg-default/view-right.svg", ":/resources/icons/svg-default/view-right-white.svg");
+  initActionIcon(viewActionFront, ":/resources/icons/svg-default/view-front.svg", ":/resources/icons/svg-default/view-front-white.svg");
+  initActionIcon(viewActionBack, ":/resources/icons/svg-default/view-back.svg", ":/resources/icons/svg-default/view-back-white.svg");
+  initActionIcon(viewActionSurfaces, ":/resources/icons/svg-default/surface.svg", ":/resources/icons/svg-default/surface-white.svg");
+  initActionIcon(viewActionWireframe, ":/resources/icons/svg-default/wireframe.svg", ":/resources/icons/svg-default/wireframe-white.svg");
+  initActionIcon(viewActionShowCrosshairs, ":/resources/icons/svg-default/crosshairs.svg", ":/resources/icons/svg-default/crosshairs-white.svg");
+  initActionIcon(viewActionThrownTogether, ":/resources/icons/svg-default/throwntogether.svg", ":/resources/icons/svg-default/throwntogether-white.svg");
+  initActionIcon(viewActionPerspective, ":/resources/icons/svg-default/perspective.svg", ":/resources/icons/svg-default/perspective-white.svg");
+  initActionIcon(viewActionOrthogonal, ":/resources/icons/svg-default/orthogonal.svg", ":/resources/icons/svg-default/orthogonal-white.svg");
+  initActionIcon(designActionPreview, ":/resources/icons/svg-default/preview.svg", ":/resources/icons/svg-default/preview-white.svg");
+  initActionIcon(designActionAbort, ":/resources/icons/svg-default/abort.svg", ":/resources/icons/svg-default/abort-white.svg");
+  initActionIcon(viewActionAnimate, ":/resources/icons/svg-default/animate.svg", ":/resources/icons/svg-default/animate-white.svg");
+  initActionIcon(fileActionExportSTL, ":/resources/icons/svg-default/export-stl.svg", ":/resources/icons/svg-default/export-stl-white.svg");
+  initActionIcon(fileActionExportAMF, ":/resources/icons/svg-default/export-amf.svg", ":/resources/icons/svg-default/export-amf-white.svg");
+  initActionIcon(fileActionExport3MF, ":/resources/icons/svg-default/export-3mf.svg", ":/resources/icons/svg-default/export-3mf-white.svg");
+  initActionIcon(fileActionExportOBJ, ":/resources/icons/svg-default/export-obj.svg", ":/resources/icons/svg-default/export-obj-white.svg");
+  initActionIcon(fileActionExportOFF, ":/resources/icons/svg-default/export-off.svg", ":/resources/icons/svg-default/export-off-white.svg");
+  initActionIcon(fileActionExportWRL, ":/resources/icons/svg-default/export-wrl.svg", ":/resources/icons/svg-default/export-wrl-white.svg");
+  initActionIcon(fileActionExportDXF, ":/resources/icons/svg-default/export-dxf.svg", ":/resources/icons/svg-default/export-dxf-white.svg");
+  initActionIcon(fileActionExportSVG, ":/resources/icons/svg-default/export-svg.svg", ":/resources/icons/svg-default/export-svg-white.svg");
+  initActionIcon(fileActionExportCSG, ":/resources/icons/svg-default/export-csg.svg", ":/resources/icons/svg-default/export-csg-white.svg");
+  initActionIcon(fileActionExportPDF, ":/resources/icons/svg-default/export-pdf.svg", ":/resources/icons/svg-default/export-pdf-white.svg");
+  initActionIcon(fileActionExportImage, ":/resources/icons/svg-default/export-png.svg", ":/resources/icons/svg-default/export-png-white.svg");
+  initActionIcon(viewActionViewAll, ":/resources/icons/svg-default/zoom-all.svg", ":/resources/icons/svg-default/zoom-all-white.svg");
+  initActionIcon(editActionUndo, ":/resources/icons/svg-default/undo.svg", ":/resources/icons/svg-default/undo-white.svg");
+  initActionIcon(editActionRedo, ":/resources/icons/svg-default/redo.svg", ":/resources/icons/svg-default/redo-white.svg");
+  initActionIcon(editActionUnindent, ":/resources/icons/svg-default/unindent.svg", ":/resources/icons/svg-default/unindent-white.svg");
+  initActionIcon(editActionIndent, ":/resources/icons/svg-default/indent.svg", ":/resources/icons/svg-default/indent-white.svg");
+  initActionIcon(viewActionResetView, ":/resources/icons/svg-default/reset-view.svg", ":/resources/icons/svg-default/reset-view-white.svg");
+  initActionIcon(viewActionShowScaleProportional, ":/resources/icons/svg-default/scalemarkers.svg", ":/resources/icons/svg-default/scalemarkers-white.svg");
+>>>>>>> f35d0f0a5... various debugging/visibility changes
 
   // fetch window states to be restored after restoreState() call
   bool hideConsole = settings.value("view/hideConsole").toBool();
@@ -669,8 +723,10 @@ MainWindow::MainWindow(const QStringList& filenames)
   connect(this->errorLogDock, SIGNAL(topLevelChanged(bool)), this, SLOT(errorLogTopLevelChanged(bool)));
 
   // display this window and check for OpenGL 2.0 (OpenCSG) support
+  OPENGL_TEST("pre-viewMode");
   viewModeThrownTogether();
   show();
+  OPENGL_TEST("show");
 
   setCurrentOutput();
 
@@ -679,6 +735,8 @@ MainWindow::MainWindow(const QStringList& filenames)
 #else
   viewModeThrownTogether();
 #endif
+  OPENGL_TEST("viewMode");
+
   loadViewSettings();
   loadDesignSettings();
 
@@ -1244,6 +1302,7 @@ void MainWindow::instantiateRoot()
     AbstractNode::resetIndexCounter();
 
     EvaluationSession session{doc.parent_path().string()};
+    LOCK_DURING(guard, evalSession = &session);
     ContextHandle<BuiltinContext> builtin_context{Context::create<BuiltinContext>(&session)};
     setRenderVariables(builtin_context);
 
@@ -1266,6 +1325,8 @@ void MainWindow::instantiateRoot()
       // FIXME: Consider giving away ownership of root_node to the Tree, or use reference counted pointers
       this->tree.setRoot(this->root_node);
     }
+
+    LOCK_DURING(guard, evalSession = nullptr);
   }
 
   if (!this->root_node) {
@@ -1308,6 +1369,7 @@ void MainWindow::compileCSG()
     else return;
     try {
 #ifdef ENABLE_OPENCSG
+      LOCK_DURING(guard, visitation = &csgrenderer);
       this->processEvents();
       this->csgRoot = csgrenderer.buildCSGTree(*root_node);
 #endif
@@ -1318,6 +1380,8 @@ void MainWindow::compileCSG()
     } catch (const HardWarningException&) {
       LOG(message_group::None, Location::NONE, "", "CSG generation cancelled due to hardwarning being enabled.");
     }
+
+    LOCK_DURING(guard, visitation = nullptr);
     progress_report_fin();
     updateStatusBar(nullptr);
 
@@ -1925,6 +1989,13 @@ void MainWindow::actionRenderPreview()
     // it must be called from the mainloop
     QTimer::singleShot(0, this, SLOT(actionRenderPreview()));
   }
+}
+
+void MainWindow::actionRenderAbort()
+{
+    LOCK(guard);
+    if (visitation) visitation->abort();
+    if (evalSession) evalSession->abort();
 }
 
 void MainWindow::csgRender()

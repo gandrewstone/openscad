@@ -1,14 +1,21 @@
 #pragma once
 
 #include <iostream>
+#include <atomic>
 
 // FIXME: Default constructor Response()
 enum class Response {ContinueTraversal, AbortTraversal, PruneTraversal};
 
 class BaseVisitor
 {
+protected:
+  volatile std::atomic_bool abortFlag;
 public:
+  BaseVisitor():abortFlag(false) {}
   virtual ~BaseVisitor() {}
+
+  void resetAbort(void) { abortFlag = false; }
+  void abort(void) { abortFlag = true; }
 };
 
 template <class T>

@@ -238,7 +238,7 @@ const std::string Value::typeName() const
 }
 
 // free functions for use by static_visitor templated functions in creating undef messages.
-std::string getTypeName(const UndefType&) { return "undefined"; }
+std::string getTypeName(const UndefType& u) { return "undefined{" + u.toString() + "}"; }
 std::string getTypeName(bool) { return "bool"; }
 std::string getTypeName(double) { return "number"; }
 std::string getTypeName(const str_utf8_wrapper&) { return "string"; }

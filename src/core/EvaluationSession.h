@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <boost/optional.hpp>
@@ -15,7 +16,7 @@ class EvaluationSession
 {
 public:
   EvaluationSession(const std::string& documentRoot) :
-    document_root(documentRoot)
+      abortFlag(false), document_root(documentRoot)
   {}
 
   size_t push_frame(ContextFrame *frame);
@@ -31,7 +32,12 @@ public:
   ContextMemoryManager& contextMemoryManager() { return context_memory_manager; }
   HeapSizeAccounting& accounting() { return context_memory_manager.accounting(); }
 
+  void resetAbort(void) { abortFlag = false; }
+  void abort(void) { abortFlag = true; }
+  bool isAborted() { return abortFlag; }
+
 private:
+  volatile std::atomic_bool abortFlag;
   std::string document_root;
   std::vector<ContextFrame *> stack;
   ContextMemoryManager context_memory_manager;
