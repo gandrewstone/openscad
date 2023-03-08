@@ -36,6 +36,7 @@
 #include <sstream>
 #include "boost-utils.h"
 
+// TODO: parallelize
 std::vector<std::string> StaticModuleNameStack::stack;
 
 static void NOINLINE print_err(std::string name, const Location& loc, const std::shared_ptr<const Context> context){

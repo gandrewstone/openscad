@@ -120,6 +120,7 @@
 
 #endif // ENABLE_CGAL
 
+#include "JobHandler.h"
 #include "FontCache.h"
 #include "PrintInitDialog.h"
 #include "input/InputDriverManager.h"
@@ -144,6 +145,8 @@ bool MainWindow::undockMode = false;
 bool MainWindow::reorderMode = false;
 const int MainWindow::tabStopWidth = 15;
 QElapsedTimer *MainWindow::progressThrottle = new QElapsedTimer();
+
+JobHandler computeHandler(4);
 
 namespace {
 
@@ -231,6 +234,29 @@ void addExportActions(const MainWindow *mainWindow, QToolBar *toolbar, QAction *
 }
 
 } // namespace
+
+class RenderSession
+{
+public:
+  QString last_compiled_doc;
+  std::string fulltext;
+  SourceFile *root_file; // Result of parsing
+  SourceFile *parsed_file; // Last parse for include list
+  time_t includes_mtime; // latest include mod time
+  time_t deps_mtime; // latest dependency mod time
+  
+  char const *afterCompileSlot;  
+  shared_ptr<class CSGNode> csgRoot; // Result of the CSGTreeEvaluator
+  shared_ptr<CSGNode> normalizedRoot; // Normalized CSG tree
+  shared_ptr<class CSGProducts> root_products;
+  shared_ptr<CSGProducts> highlights_products;
+  shared_ptr<CSGProducts> background_products;
+  Tree tree;
+  RenderStatistic renderStatistic;
+
+  int last_parser_error_pos = -1; // last highlighted error position
+
+};
 
 MainWindow::MainWindow(const QStringList& filenames)
   : library_info_dialog(nullptr), font_list_dialog(nullptr),
@@ -928,23 +954,28 @@ void MainWindow::showProgress()
 
 void MainWindow::report_func(const std::shared_ptr<const AbstractNode>& , void *vp, int mark)
 {
+    auto thisp = static_cast<MainWindow *>(vp);
+    thisp->inGui([thisp, mark] {
   // limit to progress bar update calls to 5 per second
   static const qint64 MIN_TIMEOUT = 200;
   if (progressThrottle->hasExpired(MIN_TIMEOUT)) {
     progressThrottle->start();
 
-    auto thisp = static_cast<MainWindow *>(vp);
     auto v = static_cast<int>((mark * 1000.0) / progress_report_count);
     auto permille = v < 1000 ? v : 999;
-    if (permille > thisp->progresswidget->value()) {
-      QMetaObject::invokeMethod(thisp->progresswidget, "setValue", Qt::QueuedConnection,
-                                Q_ARG(int, permille));
-      QApplication::processEvents();
+    auto widget = thisp->progresswidget;
+    if (widget)
+    {
+        if (permille > widget->value()) {
+            QMetaObject::invokeMethod(thisp->progresswidget, "setValue", Qt::QueuedConnection,
+                                      Q_ARG(int, permille));
+            QApplication::processEvents();
+        }
+        // FIXME: Check if cancel was requested by e.g. Application quit
+        if (widget->wasCanceled()) throw ProgressCancelException();
     }
-
-    // FIXME: Check if cancel was requested by e.g. Application quit
-    if (thisp->progresswidget->wasCanceled()) throw ProgressCancelException();
   }
+        });
 }
 
 bool MainWindow::network_progress_func(const double permille)
@@ -1141,6 +1172,91 @@ void MainWindow::compile(bool reload, bool forcedone)
   }
 }
 
+/*!
+   compiles the design. Calls compileDone() if anything was compiled
+ */
+void MainWindow::asyncCompile(RenderSession& session, bool reload, bool forcedone)
+{
+  OpenSCAD::hardwarnings = Preferences::inst()->getValue("advanced/enableHardwarnings").toBool();
+  OpenSCAD::traceDepth = Preferences::inst()->getValue("advanced/traceDepth").toUInt();
+  OpenSCAD::traceUsermoduleParameters = Preferences::inst()->getValue("advanced/enableTraceUsermoduleParameters").toBool();
+  OpenSCAD::parameterCheck = Preferences::inst()->getValue("advanced/enableParameterCheck").toBool();
+  OpenSCAD::rangeCheck = Preferences::inst()->getValue("advanced/enableParameterRangeCheck").toBool();
+
+  try{
+    bool shouldcompiletoplevel = false;
+    bool didcompile = false;
+
+    compileErrors = 0;
+    compileWarnings = 0;
+
+    inGui([this] { restartProgressWidget(); });
+    session.renderStatistic.start();
+
+    // Reload checks the timestamp of the toplevel file and refreshes if necessary,
+    if (reload) {
+      // Refresh files if it has changed on disk
+      if (fileChangedOnDisk() && checkEditorModified()) {
+        shouldcompiletoplevel = tabManager->refreshDocument(); // don't compile if we couldn't open the file
+        if (shouldcompiletoplevel && Preferences::inst()->getValue("advanced/autoReloadRaise").toBool()) {
+          // reloading the 'same' document brings the 'old' one to front.
+          this->raise();
+        }
+      }
+      // If the file hasn't changed, we might still need to compile it
+      // if we haven't yet compiled the current text.
+      else {
+        auto current_doc = activeEditor->toPlainText();
+        if (current_doc.size() && last_compiled_doc.size() == 0) {
+          shouldcompiletoplevel = true;
+        }
+      }
+    } else {
+      shouldcompiletoplevel = true;
+    }
+
+    if (session->parsed_file) {
+      auto mtime = session->parsed_file->includesChanged();
+      if (mtime > session->includes_mtime) {
+        session->includes_mtime = mtime;
+        shouldcompiletoplevel = true;
+      }
+    }
+    // Parsing and dependency handling must run to completion even with stop on errors to prevent auto
+    // reload picking up where it left off, thwarting the stop, so we turn off exceptions in PRINT.
+    no_exceptions_for_warnings();
+    if (shouldcompiletoplevel) {
+      inGui([this] { this->errorLogWidget->clearModel(); });
+      if(Preferences::inst()->getValue("advanced/consoleAutoClear").toBool()){
+        this->console->actionClearConsole_triggered();
+      }
+      if (activeEditor->isContentModified()) saveBackup();
+      parseTopLevelDocument(session);
+      didcompile = true;
+    }
+
+    if (session.root_file) {
+      auto mtime = session.root_file->handleDependencies();
+      if (mtime > session.deps_mtime) {
+        session.deps_mtime = mtime;
+        LOG(message_group::None, Location::NONE, "", "Used file cache size: %1$d files", SourceFileCache::instance()->size());
+        didcompile = true;
+      }
+    }
+
+    // Had any errors in the parse that would have caused exceptions via PRINT.
+    if (would_have_thrown()) throw HardWarningException("");
+
+    bool recompile = didcompile | forcedone;
+    asyncCompileDone(session, recompile);
+  } catch (const HardWarningException&) {
+    exceptionCleanup();
+  } catch (...) {
+    UnknownExceptionCleanup();
+  }
+}
+
+
 void MainWindow::waitAfterReload()
 {
   no_exceptions_for_warnings();
@@ -1210,8 +1326,34 @@ void MainWindow::compileDone(bool didchange)
 
     this->procevents = false;
     QMetaObject::invokeMethod(this, callslot);
+   } catch (const HardWarningException&) {
+     exceptionCleanup();
+   }
+}
+
+void MainWindow::asyncCompileDone(RenderSession& session, bool didchange)
+{
+  OpenSCAD::hardwarnings = Preferences::inst()->getValue("advanced/enableHardwarnings").toBool();
+  try{
+    const char *callslot;
+    if (didchange) {
+      computeHandler.append([this] {
+        try {
+          this->asyncInstantiateRoot();
+          inGui([this] { this->updateCompileResult(); });
+          this->procevents = false;
+          if (this->root_node) thunkCompileCSG();
+          printf("invoking %s\n", session.afterCompileSlot);
+          QMetaObject::invokeMethod(this, session.afterCompileSlot);
+          } catch (const HardWarningException&) {
+          inGui([this, session] { this->exceptionCleanup(session); }
+          }
+       });
+    } else {
+        inGui([this, session] { this->compileEnded(session); })
+    }
   } catch (const HardWarningException&) {
-    exceptionCleanup();
+        inGui([this, session] { this->exceptionCleanup(session); }
   }
 }
 
@@ -1221,6 +1363,13 @@ void MainWindow::compileEnded()
   GuiLocker::unlock();
   if (designActionAutoReload->isChecked()) autoReloadTimer->start();
 }
+
+void MainWindow::compileEnded(RenderSession& session)
+{
+  clearCurrentOutput();
+  if (designActionAutoReload->isChecked()) autoReloadTimer->start();
+}
+
 
 void MainWindow::instantiateRoot()
 {
@@ -1294,6 +1443,80 @@ void MainWindow::instantiateRoot()
   }
 }
 
+void MainWindow::replaceRoot(const std::shared_ptr<AbstractNode>& absolute, const std::shared_ptr<AbstractNode>& root, const std::string& docpath)
+{
+  // Invalidate renderers before we kill the CSG tree
+  this->qglview->setRenderer(nullptr);
+#ifdef ENABLE_OPENCSG
+  delete this->opencsgRenderer;
+  this->opencsgRenderer = nullptr;
+#endif
+  delete this->thrownTogetherRenderer;
+  this->thrownTogetherRenderer = nullptr;
+
+  // Remove previous CSG tree
+  this->csgRoot.reset();
+  this->normalizedRoot.reset();
+  this->root_products.reset();
+
+  this->tree.setDocumentPath(docpath);
+  this->absolute_root_node = absolute;
+  this->root_node = root;
+  this->tree.setRoot(this->root_node);
+}
+
+void MainWindow::asyncInstantiateRoot()
+{
+  // Go on and instantiate root_node, then call the continuation slot
+
+  boost::filesystem::path doc(activeEditor->filepath.toStdString());
+  std::string docpath = doc.parent_path().string();
+  std::shared_ptr<AbstractNode> rootNode;
+
+  if (this->root_file) {
+    // Evaluate CSG tree
+    LOG(message_group::None, Location::NONE, "", "Compiling design (CSG Tree generation)...");
+
+    AbstractNode::resetIndexCounter();
+
+    EvaluationSession session{doc.parent_path().string()};
+    LOCK_DURING(guard, evalSession = &session);
+    ContextHandle<BuiltinContext> builtin_context{Context::create<BuiltinContext>(&session)};
+    setRenderVariables(builtin_context);
+
+    std::shared_ptr<const FileContext> file_context;
+    std::shared_ptr<AbstractNode> absoluteRootNode = this->root_file->instantiate(*builtin_context, &file_context);
+    if (file_context) {
+      this->qglview->cam.updateView(file_context, false);
+    }
+
+    if (absoluteRootNode) {
+      // Do we have an explicit root node (! modifier)?
+      const Location *nextLocation = nullptr;
+      if (!(rootNode = find_root_tag(absoluteRootNode, &nextLocation))) {
+          rootNode = absoluteRootNode;
+      }
+      if (nextLocation) {
+        LOG(message_group::None, *nextLocation, builtin_context->documentRoot(), "More than one Root Modifier (!)");
+      }
+
+      if (rootNode) inGui([this, absoluteRootNode, rootNode, docpath] { replaceRoot(absoluteRootNode, rootNode, docpath); });
+    }
+
+    LOCK_DURING(guard, evalSession = nullptr);
+  }
+
+  if (!rootNode) {
+    if (parser_error_pos < 0) {
+      LOG(message_group::Error, Location::NONE, "", "Compilation failed! (no top level object found)");
+    } else {
+      LOG(message_group::Error, Location::NONE, "", "Compilation failed!");
+    }
+    LOG(message_group::None, Location::NONE, "", " ");
+  }
+}
+
+
 /*!
    Generates CSG tree for OpenCSG evaluation.
    Assumes that the design has been parsed and evaluated (this->root_node is set)
@@ -1323,7 +1546,6 @@ void MainWindow::compileCSG()
     else return;
     try {
 #ifdef ENABLE_OPENCSG
-      LOCK_DURING(guard, visitation = &csgrenderer);
       this->processEvents();
       this->csgRoot = csgrenderer.buildCSGTree(*root_node);
 #endif
@@ -1334,8 +1556,6 @@ void MainWindow::compileCSG()
     } catch (const HardWarningException&) {
       LOG(message_group::None, Location::NONE, "", "CSG generation cancelled due to hardwarning being enabled.");
     }
-
-    LOCK_DURING(guard, visitation = nullptr);
     progress_report_fin();
     updateStatusBar(nullptr);
 
@@ -1413,6 +1633,130 @@ void MainWindow::compileCSG()
   } catch (const HardWarningException&) {
     exceptionCleanup();
   }
+}
+
+/*!
+   Generates CSG tree for OpenCSG evaluation.
+   Assumes that the design has been parsed and evaluated (this->root_node is set)
+
+   This must not be run in the QT GUI thread.
+ */
+void MainWindow::thunkCompileCSG()
+{
+try {
+#ifdef ENABLE_CGAL
+    GeometryEvaluator geomevaluator(this->tree);
+#else
+    // FIXME: Will we support this?
+#endif
+#ifdef ENABLE_OPENCSG
+    CSGTreeEvaluator csgrenderer(this->tree, &geomevaluator);
+#endif
+    if (!isClosing) progress_report_prep(this->root_node, report_func, this);
+    else return;
+    try {
+#ifdef ENABLE_OPENCSG
+      LOCK_DURING(guard, visitation = &csgrenderer);
+      this->csgRoot = csgrenderer.buildCSGTree(*root_node);
+#endif
+      renderStatistic.printCacheStatistic();
+    } catch (const ProgressCancelException&) {
+      LOG(message_group::None, Location::NONE, "", "CSG generation cancelled.");
+    } catch (const HardWarningException&) {
+      LOG(message_group::None, Location::NONE, "", "CSG generation cancelled due to hardwarning being enabled.");
+    }
+
+    LOCK_DURING(guard, visitation = nullptr);
+    progress_report_fin();
+    inGui([this] {
+              updateStatusBar(nullptr);
+          } );
+
+    LOG(message_group::None, Location::NONE, "", "Compiling design (CSG Products normalization)...");
+    
+    size_t normalizelimit = 2 * Preferences::inst()->getValue("advanced/openCSGLimit").toUInt();
+    CSGTreeNormalizer normalizer(normalizelimit);
+
+    if (this->csgRoot) {
+      this->normalizedRoot = normalizer.normalize(this->csgRoot);
+      if (this->normalizedRoot) {
+        this->root_products.reset(new CSGProducts());
+        this->root_products->import(this->normalizedRoot);
+      } else {
+        this->root_products.reset();
+        LOG(message_group::Warning, Location::NONE, "", "CSG normalization resulted in an empty tree");
+      }
+    }
+
+    const std::vector<shared_ptr<CSGNode>>& highlight_terms = csgrenderer.getHighlightNodes();
+    if (highlight_terms.size() > 0) {
+      LOG(message_group::None, Location::NONE, "", "Compiling highlights (%1$d CSG Trees)...", highlight_terms.size());
+
+      this->highlights_products.reset(new CSGProducts());
+      for (unsigned int i = 0; i < highlight_terms.size(); ++i) {
+        auto nterm = normalizer.normalize(highlight_terms[i]);
+        if (nterm) {
+          this->highlights_products->import(nterm);
+        }
+      }
+    } else {
+      this->highlights_products.reset();
+    }
+
+    const auto& background_terms = csgrenderer.getBackgroundNodes();
+    if (background_terms.size() > 0) {
+      LOG(message_group::None, Location::NONE, "", "Compiling background (%1$d CSG Trees)...", background_terms.size());
+
+      this->background_products.reset(new CSGProducts());
+      for (unsigned int i = 0; i < background_terms.size(); ++i) {
+        auto nterm = normalizer.normalize(background_terms[i]);
+        if (nterm) {
+          this->background_products->import(nterm);
+        }
+      }
+    } else {
+      this->background_products.reset();
+    }
+
+    if (this->root_products &&
+        (this->root_products->size() >
+         Preferences::inst()->getValue("advanced/openCSGLimit").toUInt())) {
+      LOG(message_group::UI_Warning, Location::NONE, "", "Normalized tree has %1$d elements!", this->root_products->size());
+      LOG(message_group::UI_Warning, Location::NONE, "", "OpenCSG rendering has been disabled.");
+    }
+#ifdef ENABLE_OPENCSG
+    else {
+      LOG(message_group::None, Location::NONE, "", "Normalized tree has %1$d elements!",
+          (this->root_products ? this->root_products->size() : 0));
+      this->opencsgRenderer = new OpenCSGRenderer(this->root_products,
+                                                  this->highlights_products,
+                                                  this->background_products);
+    }
+#endif
+    this->thrownTogetherRenderer = new ThrownTogetherRenderer(this->root_products,
+                                                              this->highlights_products,
+                                                              this->background_products);
+    LOG(message_group::None, Location::NONE, "", "Compile and preview finished.");
+    renderStatistic.printRenderingTime();
+  } catch (const HardWarningException&) {
+    printf("exception\n");
+    exceptionCleanup();
+  }
+}
+
+void MainWindow::asyncCompileCSG()
+{
+  OpenSCAD::hardwarnings = Preferences::inst()->getValue("advanced/enableHardwarnings").toBool();
+
+  assert(this->root_node);
+  LOG(message_group::None, Location::NONE, "", "Compiling design (CSG Products generation)...");
+  this->processEvents();
+
+  restartProgressWidget();
+  // Main CSG evaluation
+  computeHandler.append([this] {
+                            this->thunkCompileCSG(); });
+
 }
 
 void MainWindow::actionOpen()
@@ -1834,18 +2178,45 @@ void MainWindow::parseTopLevelDocument()
   this->root_file = nullptr;  // ditto
   this->root_file = parse(this->parsed_file, fulltext, fname, fname, false) ? this->parsed_file : nullptr;
 
-  this->activeEditor->resetHighlighting();
-  if (this->root_file != nullptr) {
-    //add parameters as annotation in AST
-    CommentParser::collectParameters(fulltext, this->root_file);
-    this->activeEditor->parameterWidget->setParameters(this->root_file, fulltext);
-    this->activeEditor->parameterWidget->applyParameters(this->root_file);
-    this->activeEditor->parameterWidget->setEnabled(true);
-    this->activeEditor->setIndicator(this->root_file->indicatorData);
-  } else {
-    this->activeEditor->parameterWidget->setEnabled(false);
-  }
+  inGui([this, fulltext] {
+            this->activeEditor->resetHighlighting();
+            if (this->root_file != nullptr) {
+                //add parameters as annotation in AST
+                CommentParser::collectParameters(fulltext, this->root_file);
+                this->activeEditor->parameterWidget->setParameters(this->root_file, fulltext);
+                this->activeEditor->parameterWidget->applyParameters(this->root_file);
+                this->activeEditor->parameterWidget->setEnabled(true);
+                this->activeEditor->setIndicator(this->root_file->indicatorData);
+            } else {
+                this->activeEditor->parameterWidget->setEnabled(false);
+            }
+        });
 }
+
+
+
+/*!
+   Returns true if anything was compiled.
+ */
+void MainWindow::parseTopLevelDocument(RenderSession& session)
+{
+    // TODO message should go into the session, not the log
+  resetSuppressedMessages();
+
+  session.last_compiled_doc = activeEditor->toPlainText();
+
+  session.fulltext =
+    std::string(session.last_compiled_doc.toUtf8().constData()) +
+    "\n\x03\n" + commandline_commands;
+
+  auto fnameba = activeEditor->filepath.toLocal8Bit();
+  const char *fname = activeEditor->filepath.isEmpty() ? "" : fnameba;
+
+  session.parsed_file = nullptr; // because the parse() call can throw and we don't want a stale pointer!
+  session.root_file = nullptr;  // ditto
+  session.root_file = parse(session.parsed_file, session.fulltext, fname, fname, false) ? session.parsed_file : nullptr;
+}
+
 
 void MainWindow::changeParameterWidget()
 {
@@ -1855,7 +2226,8 @@ void MainWindow::changeParameterWidget()
 void MainWindow::checkAutoReload()
 {
   if (!activeEditor->filepath.isEmpty()) {
-    actionReloadRenderPreview();
+      //actionReloadRenderPreview();
+      // TODO don't reload if nothing happened
   }
 }
 
@@ -1888,19 +2260,21 @@ void MainWindow::actionReloadRenderPreview()
 {
   if (GuiLocker::isLocked()) return;
   GuiLocker::lock();
-  autoReloadTimer->stop();
-  setCurrentOutput();
 
-  this->afterCompileSlot = "csgReloadRender";
-  this->procevents = true;
-  this->is_preview = true;
-  compile(true);
+  //prepareCompile("csgReloadRender", true, true);
+  //compile(true);
+  prepareCompile("renderModel", true, true);
+  computeHandler.append([this] { asyncCompile(true); });
 }
 
 void MainWindow::csgReloadRender()
 {
   if (this->root_node) compileCSG();
+  renderModel();
+}
 
+void MainWindow::renderModel()
+{
   // Go to non-CGAL view mode
   if (viewActionThrownTogether->isChecked()) {
     viewModeThrownTogether();
@@ -1936,7 +2310,7 @@ void MainWindow::actionRenderPreview()
   preview_requested = false;
 
   prepareCompile("csgRender", !viewActionAnimate->isChecked(), true);
-  compile(false, false);
+  computeHandler.append([this] { asyncCompile(false, false); });
   if (preview_requested) {
     // if the action was called when the gui was locked, we must request it one more time
     // however, it's not possible to call it directly NOR make the loop
@@ -1955,7 +2329,6 @@ void MainWindow::actionRenderAbort()
 void MainWindow::csgRender()
 {
   if (this->root_node) compileCSG();
-
   // Go to non-CGAL view mode
   if (viewActionThrownTogether->isChecked()) {
     viewModeThrownTogether();
@@ -2087,8 +2460,7 @@ void MainWindow::sendToOctoPrint()
   exportFileByName(this->root_geom, exportInfo);
 
   try {
-    this->progresswidget = new ProgressWidget(this);
-    connect(this->progresswidget, SIGNAL(requestShow()), this, SLOT(showProgress()));
+    restartProgressWidget();
     const QString fileUrl = octoPrint.upload(exportFileName, userFileName, [this](double v) -> bool {
       return network_progress_func(v);
     });
@@ -2153,8 +2525,7 @@ void MainWindow::sendToPrintService()
   //The result is put in partUrl.
   try
   {
-    this->progresswidget = new ProgressWidget(this);
-    connect(this->progresswidget, SIGNAL(requestShow()), this, SLOT(showProgress()));
+    restartProgressWidget();
     const QString partUrl = PrintService::inst()->upload(userFacingName, fileContentBase64, [this](double v) -> bool {
       return network_progress_func(v);
     });
@@ -2191,9 +2562,7 @@ void MainWindow::cgalRender()
   this->root_geom.reset();
 
   LOG(message_group::None, Location::NONE, "", "Rendering Polygon Mesh using CGAL...");
-
-  this->progresswidget = new ProgressWidget(this);
-  connect(this->progresswidget, SIGNAL(requestShow()), this, SLOT(showProgress()));
+  restartProgressWidget();
 
   if (!isClosing) progress_report_prep(this->root_node, report_func, this);
   else return;
@@ -2391,6 +2760,20 @@ void MainWindow::UnknownExceptionCleanup(){
   GuiLocker::unlock();
   if (designActionAutoReload->isChecked()) autoReloadTimer->start();
 }
+
+void MainWindow::exceptionCleanup(RenderSession& session){
+  LOG(message_group::None, Location::NONE, "", "Execution aborted");
+  LOG(message_group::None, Location::NONE, "", " ");
+  if (designActionAutoReload->isChecked()) autoReloadTimer->start();
+}
+
+void MainWindow::UnknownExceptionCleanup(RenderSession& session){
+  setCurrentOutput(); // we need to show this error
+  LOG(message_group::Error, Location::NONE, "", "Parsing aborted by unknown exception");
+  LOG(message_group::None, Location::NONE, "", " ");
+  if (designActionAutoReload->isChecked()) autoReloadTimer->start();
+}
+
 
 void MainWindow::actionDisplayAST()
 {
@@ -3415,4 +3798,56 @@ QString MainWindow::exportPath(const char *suffix) {
 void MainWindow::jumpToLine(int line, int col)
 {
   this->activeEditor->setCursorPosition(line, col);
+}
+
+void MainWindow::slotify(std::function<void()> fn)
+{
+    fn();
+}
+
+void MainWindow::inGui(const std::function<void()>& fn)
+{
+    QMetaObject::invokeMethod(this, "slotify", Qt::AutoConnection, Q_ARG(std::function<void()>, fn));
+}
+
+void MainWindow::restartProgressWidget()
+{
+    this->progresswidget = new ProgressWidget(this);
+    connect(this->progresswidget, SIGNAL(requestShow()), this, SLOT(showProgress()));
+}
+
+void MainWindow::ActivateRenderSession(RenderSession& session)
+{
+    // Take away prior session stuff
+      if (view->last_parser_error_pos >= 0) emit unhighlightLastError();
+      this->activeEditor->resetHighlighting();
+
+      // Set to the new session
+      view = &session;
+
+      // Apply new session stuff
+      if (parser_error_pos >= 0) emit highlightError(parser_error_pos);
+
+    // Set the editor window relative to the newly compiled code
+    inGui([this, fulltext] {
+              if (session.root_file != nullptr) {
+                  //add parameters as annotation in AST
+                  CommentParser::collectParameters(session.fulltext, session.root_file);
+                  this->activeEditor->parameterWidget->setParameters(session.root_file, fulltext);
+                  this->activeEditor->parameterWidget->applyParameters(session.root_file);
+                  this->activeEditor->parameterWidget->setEnabled(true);
+                  this->activeEditor->setIndicator(session.root_file->indicatorData);
+              } else {
+                  this->activeEditor->parameterWidget->setEnabled(false);
+              }
+          });
+
+    // If we're auto-reloading, listen for a cascade of changes by starting a timer
+    // if something changed _and_ there are any external dependencies
+    if (reload && didcompile && session.root_file) {
+      if (session.root_file->hasIncludes() || session.root_file->usesLibraries()) {
+        this->waitAfterReloadTimer->start();
+        this->procevents = false;
+      }
+    }
 }

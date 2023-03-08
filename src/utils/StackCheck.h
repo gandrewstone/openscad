@@ -13,7 +13,8 @@ public:
   }
 
   ~StackCheck() {}
-  inline bool check() { return size() >= limit; }
+    inline bool check() { return false; }  // TODO stack check needed PER thread
+          // size() >= limit; }
 
 private:
   StackCheck() : limit(PlatformUtils::stackLimit()) {

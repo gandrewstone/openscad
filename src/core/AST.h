@@ -18,7 +18,7 @@ public:
   }
 
   std::string fileName() const { return path ? path->generic_string() : ""; }
-  const fs::path& filePath() const { return *path; }
+    const fs::path& filePath() const { return path ? *path : Location::NONE.filePath(); }
   int firstLine() const { return first_line; }
   int firstColumn() const { return first_col; }
   int lastLine() const { return last_line; }

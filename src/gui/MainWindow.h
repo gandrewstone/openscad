@@ -35,6 +35,8 @@ class MouseSelector;
 #define LOCK(x) const std::lock_guard<std::mutex> lock(x);
 #define LOCK_DURING(x, y) do { const std::lock_guard<std::mutex> lock(x); y; } while(0)
 
+Q_DECLARE_METATYPE(std::function<void()>);
+
 class MainWindow : public QMainWindow, public Ui::MainWindow, public InputEventHandler
 {
   Q_OBJECT
@@ -57,13 +59,16 @@ public:
 
   QTimer *autoReloadTimer;
   QTimer *waitAfterReloadTimer;
-  RenderStatistic renderStatistic;
 
+  RenderSession* view;
+    /*
+  RenderStatistic renderStatistic;
   SourceFile *root_file; // Result of parsing
   SourceFile *parsed_file; // Last parse for include list
   std::shared_ptr<AbstractNode> absolute_root_node; // Result of tree evaluation
   std::shared_ptr<AbstractNode> root_node; // Root if the root modifier (!) is used
   Tree tree;
+    */
   EditorInterface *activeEditor;
   TabManager *tabManager;
 
@@ -117,6 +122,7 @@ private slots:
   void consoleOutput(const Message& msgObj);
   void setCursor();
   void errorLogOutput(const Message& log_msg);
+  void slotify(std::function<void()> fn);
 
 public:
   static void consoleOutput(const Message& msgObj, void *userdata);
@@ -129,12 +135,36 @@ public:
   void exceptionCleanup();
   void UnknownExceptionCleanup();
 
+    /* Switch this window's view to be looking at the provided file and rendering */
+  void ActivateRenderSession(RenderSession& session);
+
 private:
   void initActionIcon(QAction *action, const char *darkResource, const char *lightResource);
   void setRenderVariables(ContextHandle<class BuiltinContext>& context);
   void updateCompileResult();
   void compile(bool reload, bool forcedone = false);
+  void asyncCompile(bool reload, bool forcedone = false);  // can be called in nonGUI thread
+  void asyncInstantiateRoot();
+  void replaceRoot(const std::shared_ptr<AbstractNode>& absolute, const std::shared_ptr<AbstractNode>& root, const std::string& docpath);
+
+    /*! Execute this function within the GUI thread */
+  void inGui(const std::function<void()>& fn);
+
+    /*! start or restart the progress widget */
+    void restartProgressWidget();
+
+  /*! Generates CSG tree for OpenCSG evaluation.
+   Assumes that the design has been parsed and evaluated (this->root_node is set)
+   This must not be run in the QT GUI thread.
+ */
+  void thunkCompileCSG();
+
+  /*! Generates CSG tree for OpenCSG evaluation.
+   Assumes that the design has been parsed and evaluated (this->root_node is set).
+   Actually just defers computation into a worker thread by enqueuing a call to thunkCompileCSG() as a job.
+ */
   void compileCSG();
+  void asyncCompileCSG();
   bool checkEditorModified();
   QString dumpCSGTree(const std::shared_ptr<AbstractNode> &root);
 
@@ -230,6 +260,7 @@ public slots:
 private slots:
   void csgRender();
   void csgReloadRender();
+  void renderModel();
   void action3DPrint();
   void sendToOctoPrint();
   void sendToPrintService();
@@ -341,6 +372,7 @@ public slots:
   void autoReloadSet(bool);
 
 private:
+  void asyncCompileDone(bool didchange);
   bool network_progress_func(const double permille);
   static void report_func(const std::shared_ptr<const AbstractNode> &, void *vp, int mark);
   static bool undockMode;
@@ -354,18 +386,14 @@ private:
   shared_ptr<CSGProducts> highlights_products;
   shared_ptr<CSGProducts> background_products;
 
-  char const *afterCompileSlot;
   bool procevents;
   class QTemporaryFile *tempFile;
   class ProgressWidget *progresswidget;
   class CGALWorker *cgalworker;
   QMutex consolemutex;
   EditorInterface *renderedEditor; // stores pointer to editor which has been most recently rendered
-  time_t includes_mtime; // latest include mod time
-  time_t deps_mtime; // latest dependency mod time
   std::unordered_map<std::string, QString> export_paths; // for each file type, where it was exported to last
   QString exportPath(const char *suffix); // look up the last export path and generate one if not found
-  int last_parser_error_pos; // last highlighted error position
   int tabCount = 0;
 
 signals:
